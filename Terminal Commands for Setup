@@ -1,0 +1,7 @@
+pip install -r requirements.txt
+
+python dataset_generator.py data_dir/objects_dir/lego/imgs output_dir/ --num 3 --scale --dontocclude
+
+python axelerate/train.py -c config/lego_detector.json
+
+python axelerate/infer.py -c config/lego_detector.json --weights path-to-h5-weights
