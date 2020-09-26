@@ -1,0 +1,207 @@
+import sensor,image,lcd, os, time, utime, math
+from maix_motor import Maix_motor
+from gpio import *
+from modules import ws2812
+import KPU as kpu
+
+def family_name(tag):
+    if(tag.family() == image.TAG16H5):
+        return "TAG16H5"
+    if(tag.family() == image.TAG25H7):
+        return "TAG25H7"
+    if(tag.family() == image.TAG25H9):
+        return "TAG25H9"
+    if(tag.family() == image.TAG36H10):
+        return "TAG36H10"
+    if(tag.family() == image.TAG36H11):
+        return "TAG36H11"
+    if(tag.family() == image.ARTOOLKIT):
+        return "ARTOOLKIT"
+
+def find_center(tag_id = False, object_class = False):
+    global task
+    img = sensor.snapshot()
+    a = img.replace(vflip=True, hmirror=False, transpose=True)
+
+    if tag_id:
+        img = img.resize(120,160)
+        tags = img.find_apriltags(families=tag_families)
+        if len(tags) > 0:
+            for tag in tags:
+                img.draw_rectangle(tag.rect(), color = (255, 0, 0))
+                img.draw_cross(tag.cx(), tag.cy(), color = (0, 255, 0))
+                print_args = (family_name(tag), tag.id(), (180 * tag.rotation()) / math.pi)
+                print("Tag Family %s, Tag ID %d, rotation %f (degrees)" % print_args)
+                a = lcd.display(img)
+                if tag.id() == tag_id:
+                    print('tag found')
+                    lost_counter = 0
+                    return tag.w()*tag.h()*2, tag.cx()*2
+                else:
+                    pass
+            return -1, -1
+        else:
+            a = lcd.display(img)
+            return -1, -1
+
+    if object_class:
+        img = img.resize(224,224)
+        a = img.pix_to_ai()
+        code = kpu.run_yolo2(task, img)
+        if code:
+            for i in code:
+                img.draw_rectangle(i.rect(), color = (255, 0, 0))
+                a = lcd.display(img)
+                if classes[i.classid()] == object_class:
+                    print('object found')
+
+                    return i.w()*i.h()**1.07, (i.x()+i.w()/2)**1.07
+                else:
+                    pass
+            return -1, -1
+        else:
+            a = lcd.display(img)
+            return -1, -1
+
+def scan_pan(tag_id = False, object_class = False):
+    global lost_counter
+    Maix_motor.motor_right(0, 0)
+    Maix_motor.motor_left(0, 0)
+    Maix_motor.servo_angle(2, 90)
+    for i in range(0, 180, 5):
+        area, pos = find_center(tag_id = tag_id, object_class = object_class)
+        if pos >= 110 and pos <= 130:
+            Maix_motor.servo_angle(1, 90)
+            if i >= 90:
+                Maix_motor.motor_right(40, 0)
+                Maix_motor.motor_left(-40, 0)
+                utime.sleep_ms(((i - 90) * 11))
+            if i < 90:
+                Maix_motor.motor_right(-40, 0)
+                Maix_motor.motor_left(40, 0)
+                utime.sleep_ms(((90 - i) * 13))
+            lost_counter = 0
+            Maix_motor.motor_motion(1, 1, 0)
+            time.sleep(0.3)
+            return area, pos
+        else:
+            Maix_motor.servo_angle(1, i)
+    return -1, -1
+
+
+def scan_tilt(tag_id = False, object_class = False):
+    global lost_counter
+    Maix_motor.motor_right(0, 0)
+    Maix_motor.motor_left(0, 0)
+    Maix_motor.servo_angle(1, 90)
+    for i in range(60, 120, 2):
+        area, pos = find_center(tag_id = tag_id, object_class = object_class)
+        if pos > 0:
+            lost_counter = 0
+            return area, pos
+        else:
+            Maix_motor.servo_angle(2, i)
+    return -1, -1
+
+def scan_rotate(tag_id = False, object_class = False):
+    global lost_counter
+    Maix_motor.servo_angle(1, 90)
+    Maix_motor.servo_angle(2, 90)
+    Maix_motor.motor_motion(1, 3, 0)
+    while True:
+        area, pos = find_center(tag_id = tag_id, object_class = object_class)
+        if pos > 0:
+            lost_counter = 0
+            break
+
+lcd.init()
+lcd.rotation(1)
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QVGA)
+sensor.set_vflip(1)
+sensor.run(1)
+Maix_motor.servo_angle(1, 90)
+Maix_motor.servo_angle(2, 70)
+Maix_motor.servo_angle(3, 90)
+DEBUG = 0
+speed = 30
+lost_counter = 0
+area = -1
+tag_families = image.TAG36H11
+classes = ["lego"]
+task = kpu.load('/sd/lego_detection.kmodel')
+
+kpu.set_outputs(task, 0, 7, 7, 30)
+anchor = (0.57273, 0.677385, 1.87446, 2.06253, 3.33843, 5.47434, 7.88282, 3.52778, 9.77052, 9.16828)
+a = kpu.init_yolo2(task, 0.5, 0.3, 5, anchor)
+
+ws2812_13 = ws2812(fm.board_info.D[13],5,2,3)
+ws2812_13.set_led(1, (255, 255, 255))
+ws2812_13.display()
+ws2812_13.set_led(0, (255, 255, 255))
+ws2812_13.display()
+
+while True:
+    while get_ultrasonic_distance(10) >= 2:
+
+        area, x_center = find_center(object_class = "lego")
+        if not DEBUG:
+            if x_center >= 110 and x_center <= 130:
+                Maix_motor.motor_motion(1, 1, 0)
+                time.sleep(0.2)
+            if x_center < 110 and x_center > 0:
+                Maix_motor.motor_right(speed, 0)
+                Maix_motor.motor_left(-speed, 0)
+            if x_center > 130:
+                Maix_motor.motor_right(-speed, 0)
+                Maix_motor.motor_left(speed, 0)
+            if x_center < 0:
+                lost_counter = lost_counter + 1
+                if lost_counter > 10 and lost_counter < 13:
+                    area, pos = scan_pan(object_class = "lego")
+                    area, pos = scan_tilt(object_class = "lego")
+                if lost_counter >= 12:
+                    scan_rotate(object_class = "lego")
+        print(area)
+        lcd.draw_string(10, 10, str(area), lcd.RED, lcd.WHITE)
+
+    Maix_motor.motor_motion(1, 1, 0)
+    time.sleep(0.3)
+    Maix_motor.motor_right(0, 0)
+    Maix_motor.motor_left(0, 0)
+    Maix_motor.servo_angle(3, 45)
+    speaker(3, 12, 1)
+    area = -1
+
+    while area < 4000:
+        area, x_center = find_center(tag_id = 1)
+        if not DEBUG:
+            if x_center >= 110 and x_center <= 130: Maix_motor.motor_motion(1, 1, 0)
+            if x_center < 110 and x_center > 0:
+                Maix_motor.motor_right(speed, 0)
+                Maix_motor.motor_left(-speed, 0)
+            if x_center > 130:
+                Maix_motor.motor_right(-speed, 0)
+                Maix_motor.motor_left(speed, 0)
+            if x_center < 0:
+                lost_counter = lost_counter + 1
+                if lost_counter > 10 and lost_counter < 13:
+                    area, pos = scan_pan(tag_id = 1)
+                    area, pos = scan_tilt(tag_id = 1)
+                if lost_counter >= 12:
+                    scan_rotate(tag_id = 1)
+        print(area)
+        lcd.draw_string(10, 10, str(area), lcd.RED, lcd.WHITE)
+
+    Maix_motor.motor_run(0, 0, 0)
+    speaker(3, 12, 1)
+    speaker(3, 10, 1)
+    speaker(3, 12, 1)
+    Maix_motor.servo_angle(3, 90)
+    Maix_motor.motor_motion(3, 2, 0)
+    time.sleep(1)
+    Maix_motor.motor_motion(3, 4, 0)
+    time.sleep(2)
+    Maix_motor.servo_angle(2, 80)
+    area = -1
